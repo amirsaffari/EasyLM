@@ -54,11 +54,11 @@ def main(argv):
     JaxDistributedConfig.initialize(FLAGS.jax_distributed)
     variant = mlxu.get_user_flags(FLAGS, FLAGS_DEF)
     flags_config_dict = mlxu.user_flags_to_config_dict(FLAGS, FLAGS_DEF)
-    logger = mlxu.WandBLogger(
-        config=FLAGS.logger,
-        variant=variant,
-        enable=FLAGS.log_all_worker or (jax.process_index() == 0),
-    )
+    # logger = mlxu.WandBLogger(
+    #     config=FLAGS.logger,
+    #     variant=variant,
+    #     enable=FLAGS.log_all_worker or (jax.process_index() == 0),
+    # )
     set_random_seed(FLAGS.seed)
 
     tokenizer = LLaMAConfig.get_tokenizer(FLAGS.tokenizer)
@@ -159,7 +159,7 @@ def main(argv):
         train_state_partition, train_state_shapes
     )
     checkpointer = StreamingCheckpointer(
-        FLAGS.checkpointer, logger.output_dir,
+        FLAGS.checkpointer, '/tmp/', # logger.output_dir,
         enable=jax.process_index() == 0,
     )
 
@@ -251,7 +251,7 @@ def main(argv):
                 log_metrics.update(metrics)
                 log_metrics.update(dataset_metrics)
                 log_metrics = jax.device_get(log_metrics)
-                logger.log(log_metrics)
+                # logger.log(log_metrics)
                 tqdm.write("\n" + pprint.pformat(log_metrics) + "\n")
 
             if FLAGS.save_milestone_freq > 0 and (step + 1) % FLAGS.save_milestone_freq == 0:
