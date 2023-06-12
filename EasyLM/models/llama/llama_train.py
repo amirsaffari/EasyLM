@@ -1,9 +1,12 @@
 import pprint
 from functools import partial
+import json
+from json import JSONEncoder
 
 from tqdm import tqdm, trange
 import numpy as np
 import mlxu
+from torch.utils.tensorboard import SummaryWriter
 
 import jax
 import jax.numpy as jnp
@@ -24,6 +27,12 @@ from EasyLM.models.llama.llama_model import (
     LLaMAConfig, FlaxLLaMAForCausalLMModule
 )
 
+class NumpyArrayEncoder(JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return JSONEncoder.default(self, obj)
+
 
 FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     seed=42,
@@ -42,9 +51,11 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     train_dataset=DatasetFactory.get_default_config(),
     eval_dataset=DatasetFactory.get_default_config(),
     optimizer=OptimizerFactory.get_default_config(),
+    checkpoint_dir='/tmp/',
     checkpointer=StreamingCheckpointer.get_default_config(),
     llama=LLaMAConfig.get_default_config(),
-    logger=mlxu.WandBLogger.get_default_config(),
+    tb_log_dir='/tmp/',
+    tb_log_prefix='',
     log_all_worker=False,
     jax_distributed=JaxDistributedConfig.get_default_config(),
 )
@@ -54,11 +65,8 @@ def main(argv):
     JaxDistributedConfig.initialize(FLAGS.jax_distributed)
     variant = mlxu.get_user_flags(FLAGS, FLAGS_DEF)
     flags_config_dict = mlxu.user_flags_to_config_dict(FLAGS, FLAGS_DEF)
-    # logger = mlxu.WandBLogger(
-    #     config=FLAGS.logger,
-    #     variant=variant,
-    #     enable=FLAGS.log_all_worker or (jax.process_index() == 0),
-    # )
+
+    logger = SummaryWriter(log_dir=FLAGS.tb_log_dir, comment=FLAGS.tb_log_prefix)
     set_random_seed(FLAGS.seed)
 
     tokenizer = LLaMAConfig.get_tokenizer(FLAGS.tokenizer)
@@ -159,7 +167,7 @@ def main(argv):
         train_state_partition, train_state_shapes
     )
     checkpointer = StreamingCheckpointer(
-        FLAGS.checkpointer, '/tmp/', # logger.output_dir,
+        FLAGS.checkpointer, FLAGS.checkpoint_dir,
         enable=jax.process_index() == 0,
     )
 
@@ -231,6 +239,7 @@ def main(argv):
 
         step_counter = trange(start_step, FLAGS.total_steps, ncols=0)
 
+        log_file = open(FLAGS.tb_log_dir + '/tmp.logs', 'w')
         for step, (batch, dataset_metrics) in zip(step_counter, dataset):
             train_state, sharded_rng, metrics = sharded_train_step(
                 train_state, sharded_rng, batch
@@ -251,6 +260,8 @@ def main(argv):
                 log_metrics.update(metrics)
                 log_metrics.update(dataset_metrics)
                 log_metrics = jax.device_get(log_metrics)
+                log_file.write(json.dumps(log_metrics, cls=NumpyArrayEncoder) + '\n')
+                log_file.flush()
                 # logger.log(log_metrics)
                 tqdm.write("\n" + pprint.pformat(log_metrics) + "\n")
 
