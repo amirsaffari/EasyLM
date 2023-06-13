@@ -1,7 +1,6 @@
 import pprint
 from functools import partial
 import json
-from json import JSONEncoder
 
 from tqdm import tqdm, trange
 import numpy as np
@@ -26,13 +25,6 @@ from EasyLM.jax_utils import (
 from EasyLM.models.llama.llama_model import (
     LLaMAConfig, FlaxLLaMAForCausalLMModule
 )
-
-class NumpyArrayEncoder(JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return JSONEncoder.default(self, obj)
-
 
 FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
     seed=42,
@@ -158,6 +150,12 @@ def main(argv):
         )
         return rng_generator(), metrics
 
+    def log_metrics_to_tb(log_metrics):
+        step = log_metrics['step']
+        for k, v in log_metrics.items():
+            if k != step:
+                logger.add_scalar(k, v, step)
+
     train_state_shapes = jax.eval_shape(init_fn, next_rng())
     train_state_partition = match_partition_rules(
         LLaMAConfig.get_partition_rules(), train_state_shapes
@@ -238,8 +236,6 @@ def main(argv):
         sharded_rng = next_rng()
 
         step_counter = trange(start_step, FLAGS.total_steps, ncols=0)
-
-        log_file = open(FLAGS.tb_log_dir + '/tmp.logs', 'w')
         for step, (batch, dataset_metrics) in zip(step_counter, dataset):
             train_state, sharded_rng, metrics = sharded_train_step(
                 train_state, sharded_rng, batch
@@ -260,9 +256,7 @@ def main(argv):
                 log_metrics.update(metrics)
                 log_metrics.update(dataset_metrics)
                 log_metrics = jax.device_get(log_metrics)
-                log_file.write(json.dumps(log_metrics, cls=NumpyArrayEncoder) + '\n')
-                log_file.flush()
-                # logger.log(log_metrics)
+                log_metrics_to_tb(log_metrics)
                 tqdm.write("\n" + pprint.pformat(log_metrics) + "\n")
 
             if FLAGS.save_milestone_freq > 0 and (step + 1) % FLAGS.save_milestone_freq == 0:
